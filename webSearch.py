@@ -1,17 +1,4 @@
-# class SearchResult{
-#    String[] words; # strings matched for this url
-#    String url;   # url matching search query 
-#    long frequency; #number of hits for page
-# }
-
-# interface PeerSearch {
-#     void init(DatagramSocket udp_socket); # initialise with a udp socket
-#     long joinNetwork(IPAddress bootstrap_node); #returns network_id, a locally 
-#                                        # generated number to identify peer network
-#     boolean leaveNetwork(long network_id); # parameter is previously returned peer network identifier
-#     void indexPage(String url, String[] unique_words);
-#     SearchResults[] search(String[] words)
-# }
+#Mark Whelan  - 10368335    
 from time 
 import sys
 import socket
@@ -20,13 +7,6 @@ import random
 from numpy import int32
 from pif import get_public_ip
 
-#"--bootstrap [IP Address] --id [Integer Identifier 232]".
-
-# parser = argparse.ArgumentParser(description='Process bootstrap')
-# parser.add_argument('integers', metavar='N', type=int, nargs='+', help='an integer for the accumulator')
-# parser.add_argument('--sum', dest='accumulate', action='store_const', const=sum, default=max,help='sum the integers (default: find the max)')
-# args = parser.parse_args()
-# print(args.accumulate(args.integers))
 UDP_PORT = 8767
 class node(object):
 
@@ -49,46 +29,52 @@ class node(object):
         else:
             return findNearestMatch(self.ID,foreignhash)
             
-    
+    #class deals with sending of all messages
+    #the functions of this class have two basic functionality types
+    # 1. create the message as a string to send
+    # 2. package as json and send 
 class message(object):
     def __init__(self,UDP_PORT):
         pass
-        
+        #params(IP to send to, MyID,Receivers ID)
     def joinNetwork(self,ipAddr, src,dest):    
-        #message to send
+        
         msg = { "type": "JOINING_NETWORK", "node_id": src, "target_id": dest, "ip_address": "127.0.0.1" } 
         jsmsg = json.dumps(msg)
         self.send(jsmsg, ipAddr)
         #need to resolve bootstrap IP with command line arguments
         sock.sendto(jsmsg, (ipAddr, UDP_PORT))
+        #params(messageOrigin,Message Destination, myNode, Myrouting table)
     def joinNetworkRelay(self,src,dest,myNode,rTable):
         msg = { "type": "JOINING_NETWORK_RELAY",  "node_id": src.ID, "target_id": dest.ID,"gateway_id": myNode.ID}
         jsmsg = json.dumps(msg)        
-        self.send(jsmsg, rTable[dest])
+        self.send(jsmsg,rTable[findNearestMatch (myNode.ID,dest)])
 
     def leaveNetwork(self,node,routingTable):
         msg = {"type": "LEAVING_NETWORK", "node_id": node.ID}
         jsmsg = json.dumps(msg)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        #multicasts message to all nodes in my routing table
         for ip in routingTable.itervalues():    
             self.send(jsmsg,ip)
 
     def routingInfo(self, Target, Gateway, rTable,myNode):
         rt = []
+        #creates json style list(according to spec) of my routing table
         for entry in rTable:
             rt.append({"node_id": entry, "ip_address": rTable[entry]})
 
         msg = {
-        "type": "ROUTING_INFO", # a string
-        "gateway_id": Gateway, # a non-negative number of order 2'^32^', of the gateway node
-        "node_id": Target, # a non-negative number of order 2'^32^', indicating the target node (and also the id of the joining node).
-        "ip_address": myNode.IP, # the ip address of the node sending the routing information
+        "type": "ROUTING_INFO", 
+        "gateway_id": Gateway, 
+        "node_id": Target, 
+        "ip_address": myNode.IP, 
         "route_table": rt
         }
         jsmsg = json.dumps(msg)
         self.send(jsmsg,Target)
 
-    def index(self,word, URLs,TargetIP,ID,rTable,myNode):
+    def index(self,word, URLs,rTable,myNode):
         msg = {
         "type": "INDEX", #string
         "target_id": myNode.hashCode(word), #the target id
@@ -99,7 +85,7 @@ class message(object):
               ]
         }
         jsmsg = json.dumps(msg)
-        self.send(jsmsg,TargetIP)
+        self.send(jsmsg,rTable[myNode.hashCode(word)])
     def search(self,word,myNode,rTable):
         msg = {
         "type": "SEARCH", # string
@@ -108,29 +94,33 @@ class message(object):
         "sender_id": myNode.ID, # a non-negative number of order 2'^32^', of this message originator
         }
         jsmsg = js.dumps(msg)
-        self.send(jsmsg,rTable[rTable.findNearestMatch(myNode.hashcode(word))])
+        #this rTable function within function call is messy
+        #it finds the nearest node ID to the destination of the hashcoded word 
+        #according to my routing table and forwards it to that address
+        self.send(jsmsg,rTable[rTable.findNearestMatch(myNode.ID,myNode.hashcode(word))])
         
     def ping(self,target_id,target_ip,myNode,rTable):
         msg = {
-        "type": "PING", # a string
-        "target_id": target_id, # a non-negative number of order 2'^32^', identifying the suspected dead node.
-        "sender_id": myNode.ID, # a non-negative number of order 2'^32^', identifying the originator                            #    of the ping (does not change)
-        "ip_address": myNode.IP # the ip address of  node sending the message (changes each hop)
+        "type": "PING", 
+        "target_id": target_id, 
+        "sender_id": myNode.ID, 
+        "ip_address": myNode.IP 
         }
         jsmsg = json.dumps(msg)
+        #same functionality of the above message.send
         self.send(jsmsg,rTable[rTable.findNearestMatch(myNode.ID,target_ip)])
     def ack(self, myNode,target_ip):
         msg = {
-        "type": "ACK", # a string
-        "node_id": myNode.ID, # a non-negative number of order 2'^32^', identifying the suspected dead node.
-        "ip_address": myNode.IP # the ip address of  sending node, this changes on each hop (or used to hold the keyword in an ACK message returned following an INDEX message - see note below)
+        "type": "ACK", 
+        "node_id": myNode.ID, 
+        "ip_address": myNode.IP 
         }
         self.send(msg,target_ip)
     def ackIndex(self, target_id,target_ip,keyword):
         msg = {
-        "type": "ACK_INDEX", # a string
-        "node_id": target_id, # a non-negative number of order 2'^32^', identifying the target node.
-        "keyword": keyword # the keyword from the original INDEX message 
+        "type": "ACK_INDEX", 
+        "node_id": target_id,
+        "keyword": keyword 
         }
         jsmsg = json.dumps(msg)
         self.send(jsmsg,target_ip)
@@ -139,22 +129,23 @@ class message(object):
         passin = []
         for entry in myNode.URLSave:
             passin.append({"url": entry, "rank": myNode.URLSave[entry]})
+            myNode.URLSave[entry]+=1
 
         msg ={
         "type": "SEARCH_RESPONSE",
-        "word": "word", # The word to search for
-        "node_id": target_id,  # target node id
-        "sender_id": myNode.ID, # a non-negative number of order 2'^32^', of this message originator
-        "response": passin
+        "word": "word", 
+        "node_id": target_id,  
+        "sender_id": myNode.ID, 
+        "response": passin # passes list created above into the json formatted string
         } 
         jsmsg = json.dumps(msg)
         self.send(jsmsg,target_ip)    
-
+        #generic send function used by every above function of this object
     def send(self,msg,target):
         sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         sock.sendto(msg,(target,UDP_PORT))
 
-    
+#class deals with receipt of all messages    
 class receive(object):
 
     def __init__(self,UDP_PORT,routingTable):
@@ -164,15 +155,21 @@ class receive(object):
    
     def messageRead(self,myNode,Message):
         while(True):
-            data, addr = sock.recvfrom(1024) # buffer size is 1024 bytes
+            data, addr = sock.recvfrom(1024) 
+            #load message into json format (a list in python)
             msg = json.loads(data)
             msgtype = msg["type"]
+            #If its a join, send it my routing table and check if im 
             if msgtype == "JOINING_NETWORK":
                 #send it my own routing table
                 Message.routingInfo(msg["node_id"],myNode.ID,self.routingTable)
-                #find node 
+                #find node it should be routed to if its not me(im gateway and target)
+                #send a relay to that node
                 nearest = findNearestMatch(myNode.ID,msg[node_id])
-                Message.joinNetworkRelay(msg["node_id"],nearest,myNode.ID)            
+                if nearest != myNode.ID:
+
+                    Message.joinNetworkRelay(msg["node_id"],nearest,myNode.ID)
+                #add new node to myself regardless            
                 self.routingTable.add(msg["node_id"],msg["ip_address"])
                 break
                 
@@ -181,8 +178,9 @@ class receive(object):
                 #remove data from routing table
                 break
             elif msgtype == "JOINING_NETWORK_RELAY":
+                #if its me send a routing info message back to gateway
                 if(msg["node_id"] == myNode.ID):
-                    Message.routingInfo()
+                    Message.routingInfo(msg["node_id"],msg["gateway_id"],myNode,routingTable)
                     break
                 else:
                     #node is not me and i shouldnt have received it? orrrrrrrr
@@ -191,13 +189,17 @@ class receive(object):
                     break
                 
             elif msgtype =="ROUTING_INFO":
+                #takes all message info regardless
                 for val in msg["route_table"]:
                     routingTable.add(val["ip_address"],val["node_id"])
                 if gateway_id == myNode.ID 
+                    #if im the gateway, send it to the newnode, from my routing table
                     Message.send(data,routingTable[msg["node_id"]])
                     break
             elif msgtype == "INDEX":
+                #assuming the message sender is looking for my word
                 if msg["target_id"] == myNode.ID:
+                    #add all the urls to my dict,if not already there, if s, add 1 to its rank
                     for url in msg["link"]:
                         if url in mynode.URLSave.keys()
                             myNode.URLSave[url] = myNode.URLSave[url] + 1
@@ -219,12 +221,10 @@ class receive(object):
                 resp = ""
                 for val in msg["response"]:
                     resp += val["url"] + "has been searched:" + val["rank"] + "times!\n" 
-
-                
-
                 return resp 
 
                 else:
+                    #if its a search response not meant for me, send it to my nearest match
                     Message.send(data,findNearestMatch(myNode.ID,msg["myNode"]))
                     break
             elif msgtype == "PING":
@@ -267,6 +267,9 @@ def main(word,ip):
      m = message(UDP_PORT)
      r = routingTable()
      n = node(word, ip)
+     bootIP = raw_input("IP of known network node is:")
+     bootID = raw_input("and its ID is?")
+     m.joinNetwork(bootIP,n.ID,boot.ID)
      rec = receive(UDP_PORT,r)
     while(True):
         rec.messageRead(n,m)
@@ -286,10 +289,11 @@ def main(word,ip):
                         print resp    
                         break
                 currtime = time.time()
+
             
             if resp == None
                 print "That word aint here, fool!"
-        elif user == 2
+        elif user == 2:
             
             word = raw_input("what word is it referring to?")
             ind = []
@@ -297,9 +301,15 @@ def main(word,ip):
                 ind.append (raw_input("what is the url you want it saved to?,press 0 to end"))
                 if ind == 0:
                     break
-            
+            ind.pop()
+            m.index(word,ind,r,n)
+            #if a node doesnt exist to index this word, were in trouble
+
+
+
 if __name__ == "__main__":
     if len(sys.argv) != 3:
+        #this initialises a node, you will be asked to join a network after this
         print "usage:", sys.argv[0], "word IP"
     else:   
         main(sys.argv[1],sys.argv[2])
